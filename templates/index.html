@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Téléprompteur</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎬 AI Téléprompteur</h1>
+            <p>Contrôlez votre téléprompteur avec vos mains</p>
+        </header>
+
+        <section class="editor-section">
+            <h2>📝 Votre Script</h2>
+            <div class="editor-toolbar">
+                <span class="toolbar-label">Surligner :</span>
+                <button class="highlight-btn" data-color="yellow" style="background: #fef08a;" title="Jaune"></button>
+                <button class="highlight-btn" data-color="green" style="background: #86efac;" title="Vert"></button>
+                <button class="highlight-btn" data-color="blue" style="background: #93c5fd;" title="Bleu"></button>
+                <button class="highlight-btn" data-color="pink" style="background: #f9a8d4;" title="Rose"></button>
+                <button class="highlight-btn" data-color="orange" style="background: #fdba74;" title="Orange"></button>
+                <button class="highlight-btn" data-color="none" style="background: #fff; color: #333;" title="Effacer">✕</button>
+            </div>
+            <textarea id="scriptText" class="text-editor" placeholder="Collez ou tapez votre texte ici... Sélectionnez du texte et cliquez sur une couleur pour surligner."></textarea>
+            
+            <div class="controls">
+                <div class="control-group">
+                    <label>Taille du texte</label>
+                    <div class="slider-container">
+                        <input type="range" id="fontSize" min="24" max="120" value="48">
+                        <span class="slider-value" id="fontSizeValue">48px</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Vitesse de défilement</label>
+                    <div class="slider-container">
+                        <input type="range" id="scrollSpeed" min="1" max="20" value="5">
+                        <span class="slider-value" id="scrollSpeedValue">5</span>
+                    </div>
+                </div>
+
+                <div class="settings-row">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="mirrorMode">
+                        <label for="mirrorMode">Texte inversé (miroir)</label>
+                    </div>
+                    
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="handControl" checked>
+                        <label for="handControl">Contrôle par main</label>
+                    </div>
+                </div>
+
+                <div class="mode-toggle">
+                    <button id="manualMode">Manuel</button>
+                    <button id="autoMode" class="active">Auto</button>
+                </div>
+
+                <button class="btn btn-primary" id="startBtn">▶️ Lancer le Téléprompteur</button>
+                <button class="btn btn-secondary" id="clearBtn">🗑️ Effacer</button>
+            </div>
+        </section>
+
+        <section class="editor-section">
+            <h2>ℹ️ Comment utiliser</h2>
+            <div class="gesture-info" style="position: static; max-width: 100%; background: transparent; padding: 0;">
+                <p><span class="highlight">📺 Mode Auto:</span> Le texte défile automatiquement à la vitesse définie</p>
+                <p><span class="highlight">✋ Mode Manuel:</span> Contrôlez le défilement avec votre main</p>
+                <p><span class="highlight">👋 Main ouverte:</span> Le texte défile vers le haut</p>
+                <p><span class="highlight">✊ Main fermée:</span> Le défilement s'arrête</p>
+                <p><span class="highlight">↕️ Mouvement:</span> La vitesse dépend de la hauteur de votre main</p>
+            </div>
+        </section>
+    </div>
+
+    <div class="teleprompter-view" id="teleprompterView">
+        <button class="close-btn" id="closeBtn">✕</button>
+        
+        <div class="teleprompter-content">
+            <div class="teleprompter-text" id="teleprompterText"></div>
+        </div>
+
+        <div class="hand-indicator">
+            <div class="dot" id="handDot"></div>
+            <span id="handStatus">Caméra inactive</span>
+        </div>
+
+        <div class="camera-preview" id="cameraPreview">
+            <video id="video" autoplay playsinline></video>
+        </div>
+
+        <div class="speed-control">
+            <span>Vitesse:</span>
+            <input type="range" id="speedSlider" min="1" max="20" value="5">
+            <span id="speedValue">5</span>
+        </div>
+
+        <div class="gesture-info">
+            <p><span class="highlight">✋ Main ouverte:</span> Défile</p>
+            <p><span class="highlight">✊ Main fermée:</span> Pause</p>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
+    <script>
+        const socket = io();
+        
+        let isPlaying = false;
+        let scrollPosition = 0;
+        let animationId = null;
+        let handDetectionActive = false;
+        let lastHandY = null;
+        let isHandOpen = false;
+
+        const scriptText = document.getElementById('scriptText');
+        const fontSize = document.getElementById('fontSize');
+        const fontSizeValue = document.getElementById('fontSizeValue');
+        const scrollSpeed = document.getElementById('scrollSpeed');
+        const scrollSpeedValue = document.getElementById('scrollSpeedValue');
+        const mirrorMode = document.getElementById('mirrorMode');
+        const handControl = document.getElementById('handControl');
+        const startBtn = document.getElementById('startBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const teleprompterView = document.getElementById('teleprompterView');
+        const teleprompterText = document.getElementById('teleprompterText');
+        const closeBtn = document.getElementById('closeBtn');
+        const handDot = document.getElementById('handDot');
+        const handStatus = document.getElementById('handStatus');
+        const cameraPreview = document.getElementById('cameraPreview');
+        const video = document.getElementById('video');
+        const speedSlider = document.getElementById('speedSlider');
+        const speedValue = document.getElementById('speedValue');
+        const manualModeBtn = document.getElementById('manualMode');
+        const autoModeBtn = document.getElementById('autoMode');
+
+        let currentMode = 'auto';
+        let selectedColor = null;
+
+        const colorMarkers = {
+            yellow: { open: '«', close: '»', class: 'hl-yellow' },
+            green: { open: '⟨', close: '⟩', class: 'hl-green' },
+            blue: { open: '[', close: ']', class: 'hl-blue' },
+            pink: { open: '{', close: '}', class: 'hl-pink' },
+            orange: { open: '~', close: '~', class: 'hl-orange' }
+        };
+
+        document.querySelectorAll('.highlight-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const color = btn.dataset.color;
+                
+                if (color === 'none') {
+                    removeAllHighlights();
+                    selectedColor = null;
+                    document.querySelectorAll('.highlight-btn').forEach(b => b.classList.remove('selected'));
+                    return;
+                }
+                
+                document.querySelectorAll('.highlight-btn').forEach(b => b.classList.remove('selected'));
+                btn.classList.add('selected');
+                selectedColor = color;
+                applyHighlight(color);
+            });
+        });
+
+        function applyHighlight(color) {
+            const textarea = scriptText;
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+            
+            if (start === end) return;
+            
+            const selectedText = textarea.value.substring(start, end);
+            const marker = colorMarkers[color];
+            const highlighted = marker.open + selectedText + marker.close;
+            
+            textarea.value = textarea.value.substring(0, start) + highlighted + textarea.value.substring(end);
+            
+            const newCursorPos = start + marker.open.length;
+            textarea.setSelectionRange(newCursorPos, newCursorPos + selectedText.length);
+            textarea.focus();
+        }
+
+        function removeAllHighlights() {
+            let text = scriptText.value;
+            Object.values(colorMarkers).forEach(marker => {
+                const regexOpen = new RegExp(marker.open.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+                const regexClose = new RegExp(marker.close.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+                text = text.replace(regexOpen, '').replace(regexClose, '');
+            });
+            scriptText.value = text;
+        }
+
+        function convertToHtml(text) {
+            let html = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            
+            Object.values(colorMarkers).forEach(marker => {
+                const escapedOpen = marker.open.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const escapedClose = marker.close.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                
+                const regex = new RegExp(escapedOpen + '(.+?)' + escapedClose, 'g');
+                html = html.replace(regex, `<span class="${marker.class}">$1</span>`);
+            });
+            
+            return html;
+        }
+
+        function escapeHtml(text) {
+            return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        }
+
+        fontSize.addEventListener('input', () => {
+            fontSizeValue.textContent = fontSize.value + 'px';
+            if (teleprompterText) {
+                teleprompterText.style.fontSize = fontSize.value + 'px';
+            }
+        });
+
+        scrollSpeed.addEventListener('input', () => {
+            scrollSpeedValue.textContent = scrollSpeed.value;
+            speedSlider.value = scrollSpeed.value;
+            speedValue.textContent = scrollSpeed.value;
+        });
+
+        speedSlider.addEventListener('input', () => {
+            speedValue.textContent = speedSlider.value;
+            scrollSpeed.value = speedSlider.value;
+        });
+
+        startBtn.addEventListener('click', startTeleprompter);
+        clearBtn.addEventListener('click', () => {
+            scriptText.value = '';
+        });
+
+        closeBtn.addEventListener('click', closeTeleprompter);
+
+        manualModeBtn.addEventListener('click', () => {
+            currentMode = 'manual';
+            manualModeBtn.classList.add('active');
+            autoModeBtn.classList.remove('active');
+        });
+
+        autoModeBtn.addEventListener('click', () => {
+            currentMode = 'auto';
+            autoModeBtn.classList.add('active');
+            manualModeBtn.classList.remove('active');
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (teleprompterView.classList.contains('active')) {
+                if (e.code === 'Space') {
+                    e.preventDefault();
+                    togglePlayPause();
+                } else if (e.code === 'ArrowUp') {
+                    e.preventDefault();
+                    adjustSpeed(1);
+                } else if (e.code === 'ArrowDown') {
+                    e.preventDefault();
+                    adjustSpeed(-1);
+                } else if (e.code === 'Escape') {
+                    closeTeleprompter();
+                }
+            }
+        });
+
+        async function startTeleprompter() {
+            if (!scriptText.value.trim()) {
+                alert('Veuillez entrer du texte pour le téléprompteur');
+                return;
+            }
+
+            teleprompterText.innerHTML = convertToHtml(scriptText.value);
+            teleprompterText.style.fontSize = fontSize.value + 'px';
+            
+            if (mirrorMode.checked) {
+                teleprompterText.classList.add('mirrored');
+                cameraPreview.classList.add('mirrored');
+            } else {
+                teleprompterText.classList.remove('mirrored');
+                cameraPreview.classList.remove('mirrored');
+            }
+
+            teleprompterView.classList.add('active');
+            scrollPosition = window.innerHeight * 0.7;
+            
+            if (handControl.checked) {
+                await startCamera();
+            }
+            
+            if (currentMode === 'auto') {
+                startScrolling();
+            }
+        }
+
+        function closeTeleprompter() {
+            teleprompterView.classList.remove('active');
+            stopScrolling();
+            stopCamera();
+            scrollPosition = 0;
+            teleprompterText.style.transform = 'translateY(0)';
+        }
+
+        function startScrolling() {
+            if (animationId) return;
+            isPlaying = true;
+            startScrollingLoop();
+        }
+        
+        function startScrollingLoop() {
+            function scroll() {
+                if (!isPlaying) return;
+                
+                scrollPosition += parseInt(scrollSpeed.value) * 0.5;
+                teleprompterText.style.transform = `translateY(${window.innerHeight * 0.7 - scrollPosition}px)`;
+                
+                const textHeight = teleprompterText.offsetHeight;
+                if (scrollPosition > textHeight + window.innerHeight * 0.5) {
+                    scrollPosition = 0;
+                }
+                
+                animationId = requestAnimationFrame(scroll);
+            }
+            
+            scroll();
+        }
+
+        function stopScrolling() {
+            isPlaying = false;
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
+        }
+
+        function togglePlayPause() {
+            if (isPlaying) {
+                stopScrolling();
+            } else {
+                startScrolling();
+            }
+        }
+
+        function adjustSpeed(delta) {
+            const newSpeed = Math.max(1, Math.min(20, parseInt(scrollSpeed.value) + delta));
+            scrollSpeed.value = newSpeed;
+            scrollSpeedValue.textContent = newSpeed;
+            speedSlider.value = newSpeed;
+            speedValue.textContent = newSpeed;
+        }
+
+        async function startCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { width: 320, height: 240 } 
+                });
+                video.srcObject = stream;
+                
+                handDetectionActive = true;
+                handDot.classList.add('detecting');
+                handStatus.textContent = 'Détection...';
+                
+                socket.emit('start_hand_tracking');
+            } catch (err) {
+                console.error('Erreur caméra:', err);
+                handStatus.textContent = 'Caméra non disponible';
+            }
+        }
+
+        function stopCamera() {
+            if (video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+                video.srcObject = null;
+            }
+            handDetectionActive = false;
+            handDot.classList.remove('active', 'detecting');
+            handStatus.textContent = 'Caméra inactive';
+            socket.emit('stop_hand_tracking');
+        }
+
+        let handWasOpen = true;
+        
+        socket.on('hand_detected', (data) => {
+            handDot.classList.add('active');
+            handDot.classList.remove('detecting');
+            handStatus.textContent = data.hand_open ? 'Main ouverte ✓' : 'Main fermée - Pause';
+            
+            if (currentMode === 'manual') {
+                if (data.hand_open) {
+                    const speed = Math.abs(data.speed) * 2;
+                    scrollPosition += speed;
+                    teleprompterText.style.transform = `translateY(${window.innerHeight * 0.7 - scrollPosition}px)`;
+                }
+            } else {
+                if (data.hand_open) {
+                    if (!handWasOpen) {
+                        isPlaying = true;
+                        startScrollingLoop();
+                    }
+                    const speedMultiplier = data.speed > 0 ? Math.max(0.5, data.speed / 100) : 1;
+                    const adjustedSpeed = parseInt(scrollSpeed.value) * speedMultiplier;
+                    scrollPosition += adjustedSpeed * 0.5;
+                    teleprompterText.style.transform = `translateY(${window.innerHeight * 0.7 - scrollPosition}px)`;
+                } else {
+                    if (handWasOpen) {
+                        isPlaying = false;
+                        handWasOpen = false;
+                    }
+                }
+            }
+            handWasOpen = data.hand_open;
+        });
+
+        socket.on('hand_not_detected', () => {
+            handDot.classList.remove('active');
+            handDot.classList.add('detecting');
+            handStatus.textContent = 'Pas de main détectée';
+            if (currentMode === 'auto') {
+                isPlaying = false;
+            }
+        });
+
+        socket.on('camera_error', (data) => {
+            handStatus.textContent = data.message;
+            handDot.classList.remove('active', 'detecting');
+        });
+    </script>
+</body>
+</html>
